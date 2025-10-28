@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel Empresa - Comunicación Distribuida</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
+    h1 { color: #333; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: white; padding: 12px; border-radius: 8px; border: 1px solid #ddd; }
+    .log { background: #111; color: #eee; font-family: ui-monospace, monospace; height: 240px; overflow-y: auto; padding: 8px; border-radius: 6px; }
+    input, button, select { padding: 6px; margin-top: 5px; }
+    pre { background: #f3f3f3; padding: 8px; border-radius: 6px; }
+    label { display:block; margin-top: 6px; font-size: 14px; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>🏢 Empresa Central</h1>
+
+  <div class="row">
+    <div class="card">
+      <h3>💰 Precios actuales</h3>
+      <pre id="precios"></pre>
+      <label>Tipo combustible</label>
+      <input id="tipo" placeholder="93, 95, 97, diesel, kerosene" />
+      <label>Nuevo precio</label>
+      <input id="precio" type="number" />
+      <button onclick="actualizar()">Actualizar</button>
+    </div>
+
+    <div class="card">
+      <h3>⚙️ Configuración de distribuidores</h3>
+      <div id="configList"></div>
+      <button onclick="agregarDistribuidor()">+ Agregar</button>
+      <button onclick="guardarConfig()">Guardar</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 16px;">
+    <h3>🧩 Eventos en tiempo real</h3>
+    <div id="log" class="log"></div>
+  </div>
+  <div class="card" style="margin-top: 16px;">
+  <h3>📊 Reportes de distribuidores</h3>
+  <button onclick="actualizarReportes()">Actualizar reportes</button>
+  <div id="reportes"></div>
+  </div>
+
+
+  <script>
+  async function cargarPrecios() {
+    const res = await fetch("/precios");
+    const data = await res.json();
+    document.getElementById("precios").textContent = JSON.stringify(data, null, 2);
+  }
+  async function actualizar() {
+    const tipo = document.getElementById("tipo").value.trim();
+    const nuevoPrecio = parseFloat(document.getElementById("precio").value);
+    if (!tipo || !Number.isFinite(nuevoPrecio)) return alert("Completa tipo y precio");
+    await fetch("/actualizar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ tipo, nuevoPrecio }) });
+    cargarPrecios();
+    log(`✅ Precio actualizado: ${tipo} -> ${nuevoPrecio}`);
+  }
+  function log(msg) {
+    const div = document.getElementById("log");
+    const p = document.createElement("div");
+    p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    div.appendChild(p);
+    div.scrollTop = div.scrollHeight;
+  }
+  async function cargarConfig() {
+    const res = await fetch("/config");
+    const cfg = await res.json();
+    const list = document.getElementById("configList");
+    list.innerHTML = "";
+    (cfg.distribuidoresRegistrados || []).forEach((d, idx) => {
+      const item = document.createElement("div");
+      item.innerHTML = `
+        <pre>${JSON.stringify(d, null, 2)}</pre>
+        <button onclick="removerDistribuidor(${idx})">Eliminar</button>
+      `;
+      list.appendChild(item);
+    });
+    window._cfg = cfg;
+  }
+  function agregarDistribuidor() {
+    const id = prompt("ID del distribuidor (ej. D1)");
+    const host = prompt("Host/IP del distribuidor (informativo)");
+    const puerto = prompt("Puerto (informativo)");
+    if (!window._cfg) window._cfg = { distribuidoresRegistrados: [] };
+    window._cfg.distribuidoresRegistrados.push({ id, host, puerto });
+    cargarConfig();
+  }
+  function removerDistribuidor(idx) {
+    if (!window._cfg) return;
+    window._cfg.distribuidoresRegistrados.splice(idx, 1);
+    cargarConfig();
+  }
+  async function guardarConfig() {
+    await fetch("/config", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(window._cfg || { distribuidoresRegistrados: [] }) });
+    log("💾 Configuración guardada");
+  }
+
+  // WebSocket para eventos en vivo
+  try {
+    const socket = new WebSocket(`ws://${window.location.host}`);
+    socket.onmessage = (e) => log(e.data);
+  } catch (e) {
+    log("⚠️ No fue posible conectar WebSocket");
+  }
+
+  cargarPrecios();
+  cargarConfig();
+  </script>
+</body>
+</html>
