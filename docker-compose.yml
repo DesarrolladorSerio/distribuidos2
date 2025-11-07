@@ -14,6 +14,12 @@ services:
       - red_combustible
     depends_on:
       - empresa
+    ports:
+      - "5000:5000"  
+      - "5001:5001"   
+    environment:
+      - EMPRESA_HOST=empresa
+      - EMPRESA_PORT=6000
 
   surtidor93:
     build: ./surtidor

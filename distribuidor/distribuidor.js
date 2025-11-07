@@ -1,173 +1,177 @@
+// distribuidor/distribuidor.js
 const net = require("net");
+const http = require("http");
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
+const cors = require("cors"); // <- NUEVO
 const fs = require("fs");
 const path = require("path");
 
-const PORT_HTTP = process.env.PORT_HTTP || 5000;
-const PORT_SURTIDORES = process.env.PORT_SURTIDORES || 5001;
+// === CONFIG ===
+const PORT_HTTP  = process.env.PORT_HTTP  || 5000; // /aggregate
+const PORT_PUMPS = process.env.PORT_PUMPS || 5001; // TCP surtidores
 const EMPRESA_HOST = process.env.EMPRESA_HOST || "empresa";
-const EMPRESA_PORT = process.env.EMPRESA_PORT || 6000;
-const FACTOR_UTILIDAD = parseFloat(process.env.FACTOR_UTILIDAD || "1.05");
+const EMPRESA_PORT = parseInt(process.env.EMPRESA_PORT || "6000", 10);
 
+// === STATE ===
 const app = express();
 app.use(express.json());
+app.use(cors()); // <- HABILITA CORS PARA QUE EL PANEL PUEDA LLAMAR /aggregate
 
-// --- Base de datos local + redundancia ---
-const dbFile = path.join(__dirname, "ventas.db");
-const db = new sqlite3.Database(dbFile);
-const eventsLog = path.join(__dirname, "events.log");
+let empresaSock = null;
+const surtidores = new Set();
+const pumpInfo  = new Map(); // socket -> { id, fuel }
+const ventas = []; // {surtidorId, combustible, litros, precio, ts}
+const EVENTS_LOG = path.join(__dirname, "events.log");
+let preciosActuales = {}; // fuel -> price (se llena con PRICE_SNAPSHOT)
 
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS ventas(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts INTEGER,
-    surtidorId TEXT,
-    tipo TEXT,
-    litros REAL
-  )`);
-});
-
-function appendEvent(event) {
-  try {
-    fs.appendFileSync(eventsLog, JSON.stringify(event) + "\n");
-  } catch (e) {
-    console.error("Error al escribir en log de eventos:", e.message);
-  }
+// === HELPERS ===
+function sendJSON(sock, obj){ try{ sock.write(JSON.stringify(obj) + "\n"); } catch {} }
+function decodeByLine(socket, onMsg){
+  let buf = "";
+  socket.on("data", (chunk) => {
+    buf += chunk.toString();
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 1);
+      if (!line.trim()) continue;
+      try { onMsg(JSON.parse(line)); } catch {}
+    }
+  });
 }
-
-// --- Servidor TCP para surtidores ---
-let surtidores = [];
-const serverSurtidores = net.createServer((socket) => {
-  surtidores.push(socket);
-  console.log("⛽ Surtidor conectado");
-
-  socket.on("data", (data) => {
-    try {
-      const info = JSON.parse(data.toString());
-      if (info.tipo === "VENTA") {
-        db.run(
-          "INSERT INTO ventas(ts,surtidorId,tipo,litros) VALUES(?,?,?,?)",
-          [info.ts || Date.now(), info.surtidorId || "S?", info.combustible, info.litros]
-        );
-        appendEvent({ kind: "VENTA", ...info });
-        console.log("💾 Venta registrada:", info);
+function appendEvent(kind, data){
+  try { fs.appendFileSync(EVENTS_LOG, JSON.stringify({ kind, data }) + "\n"); } catch {}
+}
+function replayBacklogToEmpresa() {
+  try {
+    if (!fs.existsSync(EVENTS_LOG)) return;
+    const lines = fs.readFileSync(EVENTS_LOG, "utf8").trim().split("\n");
+    for (const line of lines) {
+      if (!line) continue;
+      const evt = JSON.parse(line);
+      if (evt.kind === "VENTA") {
+        const e = evt.data;
+        sendJSON(empresaSock, {
+          tipo: "EVENT_SYNC",
+          id: `venta-${e.cargaN || e.ts}-${e.surtidorId}`,
+          event: e,
+          ts: Date.now()
+        });
       }
-    } catch (e) {
-      console.error("Error parseando data de surtidor:", e.message);
-    }
-  });
-
-  socket.on("end", () => {
-    surtidores = surtidores.filter((s) => s !== socket);
-  });
-});
-serverSurtidores.listen(PORT_SURTIDORES, "0.0.0.0", () =>
-  console.log(`Servidor TCP Surtidores en ${PORT_SURTIDORES}`)
-);
-
-// --- Cliente TCP hacia la empresa ---
-const clientEmpresa = new net.Socket();
-let conectado = false;
-
-// Reconexión automática
-function conectarEmpresa() {
-  if (conectado) return;
-  console.log("🔄 Intentando conectar con la empresa...");
-  clientEmpresa.connect(EMPRESA_PORT, EMPRESA_HOST, () => {
-    conectado = true;
-    console.log("✅ Conectado con la empresa");
-    enviarPendientes();
-  });
-}
-
-clientEmpresa.on("error", () => {
-  if (conectado) console.log("⚠️ Conexión perdida con la empresa");
-  conectado = false;
-  setTimeout(conectarEmpresa, 10000);
-});
-
-clientEmpresa.on("close", () => {
-  conectado = false;
-  console.log("🔌 Desconectado de la empresa, operando localmente");
-  setTimeout(conectarEmpresa, 10000);
-});
-
-clientEmpresa.on("data", (data) => {
-  try {
-    const msg = JSON.parse(data.toString());
-    if (msg.tipo === "PRECIO_BASE") {
-      const nuevoPrecio = msg.precio * FACTOR_UTILIDAD;
-      console.log("📢 Nuevo precio (con utilidad):", nuevoPrecio);
-      const payload = JSON.stringify({
-        tipo: "ACTUALIZAR_PRECIO",
-        precio: nuevoPrecio,
-        ts: Date.now(),
-      });
-      surtidores.forEach((s) => {
-        try {
-          s.write(payload);
-        } catch {}
-      });
-    } else if (msg.tipo === "SYNC_ACK") {
-      console.log("📬 Sincronización confirmada por empresa");
     }
   } catch (e) {
-    console.error("Error parseando mensaje desde empresa:", e.message);
+    console.error("Error reponiendo backlog:", e.message);
   }
-});
+}
 
-// Reenvío periódico de heartbeat
-setInterval(() => {
-  if (conectado) clientEmpresa.write("PING DISTRIBUIDOR");
-}, 15000);
+// === CONEXIÓN A EMPRESA ===
+function conectarEmpresa(){
+  empresaSock = new net.Socket();
+  empresaSock.setKeepAlive(true);
 
+  empresaSock.connect(EMPRESA_PORT, EMPRESA_HOST, () => {
+    console.log("✅ Conectado a Empresa");
+    sendJSON(empresaSock, { tipo:"HELLO", id:"DISTRIBUIDOR-1", ts:Date.now() });
+    // Pedir snapshot de precios y luego reponer backlog
+    sendJSON(empresaSock, { tipo:"GET_PRECIOS", ts: Date.now() });
+    replayBacklogToEmpresa();
+  });
+
+  decodeByLine(empresaSock, (msg) => {
+    if (msg.tipo === "PRICE_SNAPSHOT" && msg.precios) {
+      preciosActuales = msg.precios; // cache inicial
+    } else if (msg.tipo === "PRECIO_BASE" && msg.tipoCombustible) {
+      // Mantener cache al día
+      preciosActuales[msg.tipoCombustible] = msg.precio;
+      // Fanout SOLO a surtidores del combustible correspondiente
+      for (const s of surtidores) {
+        const info = pumpInfo.get(s);
+        if (info?.fuel === msg.tipoCombustible) {
+          sendJSON(s, { tipo:"ACTUALIZAR_PRECIO", fuel:msg.tipoCombustible, precio:msg.precio, ts:Date.now() });
+        }
+      }
+    } else if (msg.tipo === "SYNC_ACK") {
+      console.log("SYNC_ACK de Empresa:", msg.id);
+    } else if (msg.tipo === "PING") {
+      // noop
+    } else {
+      // otros mensajes
+    }
+  });
+
+  const retry = (why) => () => {
+    console.log("Empresa desconectada:", why);
+    try { empresaSock.destroy(); } catch {}
+    empresaSock = null;
+    setTimeout(conectarEmpresa, 2000);
+  };
+  empresaSock.on("error", retry("error"));
+  empresaSock.on("close", retry("close"));
+}
 conectarEmpresa();
 
-// --- Sincronización de eventos pendientes ---
-function enviarPendientes() {
-  if (!fs.existsSync(eventsLog)) return;
-  const lines = fs.readFileSync(eventsLog, "utf8").split("\n").filter(Boolean);
-  if (lines.length === 0) return;
+// === TCP SERVIDOR PARA SURTIDORES ===
+const tcpServer = net.createServer((socket) => {
+  surtidores.add(socket);
+  console.log("⛽ Surtidor conectado");
 
-  console.log(`📤 Enviando ${lines.length} eventos pendientes a la empresa...`);
-  lines.forEach((line) => {
-    try {
-      const ev = JSON.parse(line);
-      const payload = JSON.stringify({ tipo: "EVENT_SYNC", evento: ev });
-      clientEmpresa.write(payload);
-    } catch (e) {
-      console.error("Error enviando evento:", e.message);
+  decodeByLine(socket, (msg) => {
+    if (msg.tipo === "HELLO") {
+      pumpInfo.set(socket, { id: msg.surtidorId, fuel: msg.combustible });
+
+      // Al HELLO, empujar precio actual de SU combustible (si lo tenemos)
+      const p = preciosActuales[msg.combustible];
+      if (typeof p === "number") {
+        sendJSON(socket, { tipo:"ACTUALIZAR_PRECIO", fuel: msg.combustible, precio: p, ts: Date.now() });
+      }
+
+      if (empresaSock) sendJSON(empresaSock, { tipo:"EVENTO", fuente:"surtidor", evento:"HELLO", data:msg, ts:Date.now() });
+
+    } else if (msg.tipo === "VENTA") {
+      // Persistir en memoria y log
+      ventas.push({
+        surtidorId: msg.surtidorId,
+        combustible: msg.combustible,
+        litros: msg.litros,
+        precio: msg.precio,
+        ts: msg.ts || Date.now()
+      });
+      appendEvent("VENTA", msg);
+
+      // ONLINE: enviamos VENTA en vivo; OFFLINE: queda en log para replay
+      if (empresaSock) {
+        sendJSON(empresaSock, { tipo:"VENTA", ...msg, ts: Date.now() });
+      }
+
+      // ACK al surtidor
+      sendJSON(socket, { tipo:"ACK", ackDe:"VENTA", estado:"recibido", ts:Date.now() });
+
+    } else if (msg.tipo === "EVENTO" && msg.evento === "PRECIO_APLICADO_POST_CARGA") {
+      if (empresaSock) sendJSON(empresaSock, { tipo:"EVENTO", fuente:"surtidor", data:msg, ts:Date.now() });
     }
   });
 
-  // Limpia el log después de sincronizar
-  fs.writeFileSync(eventsLog, "");
-}
-
-// --- HTTP API para reportes ---
-app.get("/aggregate", (req, res) => {
-  db.all(
-    `SELECT tipo, COUNT(*) as cargas, SUM(litros) as litros
-     FROM ventas GROUP BY tipo`,
-    (err, rows) => {
-      if (err) return res.status(500).json({ ok: false, error: err.message });
-      res.json({ ok: true, data: rows || [] });
-    }
-  );
+  const bye = () => { surtidores.delete(socket); pumpInfo.delete(socket); };
+  socket.on("close", bye);
+  socket.on("error", bye);
 });
+tcpServer.listen(PORT_PUMPS, "0.0.0.0", () => console.log("TCP Distribuidor en", PORT_PUMPS));
 
-// --- Snapshot de redundancia ---
-app.post("/snapshot", (req, res) => {
-  try {
-    const backup = path.join(__dirname, "ventas.db.bak");
-    fs.copyFileSync(dbFile, backup);
-    res.json({ ok: true, backup });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+// === HEARTBEAT JSON HACIA EMPRESA ===
+setInterval(() => {
+  if (empresaSock) sendJSON(empresaSock, { tipo:"PING", ts:Date.now() });
+}, 5000);
+
+// === HTTP REPORTES ===
+app.get("/aggregate", (_req, res) => {
+  const out = {};
+  for (const v of ventas) {
+    out[v.combustible] = out[v.combustible] || { litros: 0, total: 0, ventas: 0 };
+    out[v.combustible].litros += v.litros;
+    out[v.combustible].total  += v.litros * v.precio;
+    out[v.combustible].ventas += 1;
   }
+  res.json({ ok: true, data: out });
 });
 
-app.listen(PORT_HTTP, () =>
-  console.log(`HTTP Distribuidor en puerto ${PORT_HTTP}`)
-);
+http.createServer(app).listen(PORT_HTTP, () => console.log("HTTP Distribuidor en", PORT_HTTP));

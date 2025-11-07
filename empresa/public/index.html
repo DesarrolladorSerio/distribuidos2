@@ -2,116 +2,317 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panel Empresa - Comunicación Distribuida</title>
+  <title>Empresa Central</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
-    h1 { color: #333; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .card { background: white; padding: 12px; border-radius: 8px; border: 1px solid #ddd; }
-    .log { background: #111; color: #eee; font-family: ui-monospace, monospace; height: 240px; overflow-y: auto; padding: 8px; border-radius: 6px; }
-    input, button, select { padding: 6px; margin-top: 5px; }
-    pre { background: #f3f3f3; padding: 8px; border-radius: 6px; }
-    label { display:block; margin-top: 6px; font-size: 14px; color: #333; }
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; background:#f6f7f9; color:#222; }
+    h1 { margin: 0 0 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: white; border: 1px solid #e0e0e0; border-radius: 10px; padding: 16px; }
+    textarea { width: 100%; height: 140px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    input[type="text"], input[type="number"] { padding: 6px 8px; }
+    button { padding: 6px 10px; }
+    .terminal { background: #0c0c0c; color: #e6e6e6; padding: 10px; border-radius: 10px; height: 260px; overflow:auto; font-family: ui-monospace, monospace; }
+    .section-title { font-weight: 700; margin-bottom: 8px; }
+    .muted { color: #777; font-size: 12px; }
+    table { border-collapse: collapse; }
+    th, td { padding: 6px 10px; border: 1px solid #dcdcdc; text-align: left; }
+    .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .dist-row { display:grid; grid-template-columns: 1fr 1.5fr 0.6fr auto; gap:6px; margin:6px 0; align-items:center; }
+    .dist-row input[type="text"] { width: 100%; }
+    .dist-row input[type="number"] { width: 100%; }
   </style>
 </head>
 <body>
-  <h1>🏢 Empresa Central</h1>
+  <h1>🧩 Empresa Central</h1>
 
-  <div class="row">
+  <div class="grid">
+    <!-- PRECIOS -->
     <div class="card">
-      <h3>💰 Precios actuales</h3>
-      <pre id="precios"></pre>
-      <label>Tipo combustible</label>
-      <input id="tipo" placeholder="93, 95, 97, diesel, kerosene" />
-      <label>Nuevo precio</label>
-      <input id="precio" type="number" />
-      <button onclick="actualizar()">Actualizar</button>
+      <div class="section-title">💰 Precios actuales</div>
+      <textarea id="preciosView" readonly></textarea>
+
+      <div style="margin-top:8px;">
+        <div class="muted">Tipo combustible</div>
+        <input id="tipoInp" type="text" placeholder="93, 95, 97, diesel, kerosene" style="width: 260px;" />
+      </div>
+      <div style="margin-top:8px;">
+        <div class="muted">Nuevo precio</div>
+        <input id="precioInp" type="number" placeholder="ej: 1200" style="width: 160px;" />
+        <button id="btnAct">Actualizar</button>
+      </div>
     </div>
 
+    <!-- CONFIG DISTRIBUIDORES -->
     <div class="card">
-      <h3>⚙️ Configuración de distribuidores</h3>
-      <div id="configList"></div>
-      <button onclick="agregarDistribuidor()">+ Agregar</button>
-      <button onclick="guardarConfig()">Guardar</button>
+      <div class="section-title">⚙️ Configuración de distribuidores</div>
+      <div class="muted">Agrega distribuidores con <b>Nombre</b>, <b>Host</b> y <b>Puerto</b> (p.ej. Nombre: Norte, Host: http://localhost, Puerto: 5000)</div>
+
+      <div style="margin-top:8px; font-weight:600;">Lista</div>
+      <div id="distList" style="margin: 6px 0;"></div>
+
+      <button id="btnAdd">+ Agregar</button>
+      <button id="btnSave">Guardar</button>
+      <div id="cfgMsg" class="muted" style="margin-top:6px;"></div>
     </div>
   </div>
 
-  <div class="card" style="margin-top: 16px;">
-    <h3>🧩 Eventos en tiempo real</h3>
-    <div id="log" class="log"></div>
-  </div>
-  <div class="card" style="margin-top: 16px;">
-  <h3>📊 Reportes de distribuidores</h3>
-  <button onclick="actualizarReportes()">Actualizar reportes</button>
-  <div id="reportes"></div>
+  <!-- EVENTOS -->
+  <div class="card" style="margin-top:16px;">
+    <div class="section-title">🍀 Eventos en tiempo real</div>
+    <div id="log" class="terminal"></div>
   </div>
 
+  <!-- REPORTES -->
+  <div class="card" style="margin-top:16px;">
+    <div class="section-title">📊 Reportes de distribuidores</div>
+    <div class="row" style="margin-bottom:8px;">
+      <button id="btnRep">Actualizar reportes</button>
+      <label class="row" style="gap:6px;">
+        <input id="autoChk" type="checkbox" />
+        Auto-actualizar cada
+      </label>
+      <input id="secsInp" type="number" min="2" value="5" style="width:80px;" />
+      <span>segundos</span>
+      <span id="repStatus" class="muted"></span>
+    </div>
+    <div id="reportesOut" style="margin-top:10px;"></div>
+  </div>
 
-  <script>
-  async function cargarPrecios() {
-    const res = await fetch("/precios");
-    const data = await res.json();
-    document.getElementById("precios").textContent = JSON.stringify(data, null, 2);
+<script>
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+
+// ---- util ----
+function log(msg) {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,"0");
+  const mm = String(now.getMinutes()).padStart(2,"0");
+  const ss = String(now.getSeconds()).padStart(2,"0");
+  const line = `[${hh}:${mm}:${ss}] ${msg}`;
+  const div = document.createElement("div");
+  div.textContent = line;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function toURL(host, port) {
+  let h = (host || "").trim();
+  if (!/^https?:\/\//i.test(h)) h = "http://" + h;
+  return `${h.replace(/\/+$/,"")}:${port}`;
+}
+
+// ---- precios ----
+async function cargarPrecios() {
+  const j = await fetch("/precios").then(r=>r.json());
+  $("preciosView").value = JSON.stringify(j, null, 2);
+}
+async function actualizarPrecio() {
+  const tipo = $("tipoInp").value.trim();
+  const precio = Number($("precioInp").value);
+  if (!tipo || !Number.isFinite(precio)) return alert("Completa tipo y precio numérico.");
+  const r = await fetch("/actualizar", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ tipo, nuevoPrecio: precio })
+  });
+  const j = await r.json();
+  if (j.ok) { await cargarPrecios(); }
+  else alert(j.error || "Error");
+}
+
+// ---- websocket eventos ----
+function conectarWS() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}`);
+  ws.onopen = () => log("🔌 Conectado al panel en vivo");
+  ws.onmessage = (ev) => log(ev.data);
+  ws.onclose = () => setTimeout(conectarWS, 1000);
+}
+conectarWS();
+
+// ---- config distribuidores ----
+async function cargarConfig() {
+  const j = await fetch("/config").then(r=>r.json());
+  const raw = Array.isArray(j.distribuidoresRegistrados) ? j.distribuidoresRegistrados : [];
+
+  // Compatibilidad: si vienen strings, convertirlos a objetos {name,host,port}
+  const list = raw.map(item => {
+    if (typeof item === "string") {
+      try {
+        const u = new URL(item);
+        return { name: u.hostname, host: `${u.protocol}//${u.hostname}`, port: Number(u.port || 80) };
+      } catch {
+        return { name: item, host: "http://" + item, port: 5000 };
+      }
+    }
+    // objeto ya válido
+    const name = item.name || item.host || "";
+    let host = item.host || "";
+    if (!/^https?:\/\//i.test(host)) host = "http://" + host;
+    return { name, host, port: Number(item.port || 5000) };
+  });
+
+  renderConfigInputs(list);
+}
+function renderConfigInputs(list) {
+  const host = $("distList");
+  host.innerHTML = "";
+
+  // encabezados
+  const head = document.createElement("div");
+  head.className = "dist-row";
+  head.innerHTML = `<div><b>Nombre</b></div><div><b>Host</b></div><div><b>Puerto</b></div><div></div>`;
+  host.appendChild(head);
+
+  list.forEach((v) => host.appendChild(makeRow(v.name, v.host, v.port)));
+}
+function makeRow(name="", host="", port=5000) {
+  const row = document.createElement("div");
+  row.className = "dist-row";
+
+  const nameI = document.createElement("input");
+  nameI.type = "text"; nameI.placeholder = "Norte"; nameI.value = name;
+
+  const hostI = document.createElement("input");
+  hostI.type = "text"; hostI.placeholder = "http://localhost"; hostI.value = host;
+
+  const portI = document.createElement("input");
+  portI.type = "number"; portI.min = "1"; portI.max = "65535"; portI.value = port;
+
+  const del = document.createElement("button");
+  del.textContent = "Eliminar";
+  del.onclick = () => row.remove();
+
+  row.appendChild(nameI);
+  row.appendChild(hostI);
+  row.appendChild(portI);
+  row.appendChild(del);
+
+  return row;
+}
+function recogerConfigInputs() {
+  const rows = Array.from($("distList").querySelectorAll(".dist-row")).slice(1); // saltar encabezado
+  const arr = [];
+  for (const r of rows) {
+    const [nameI, hostI, portI] = r.querySelectorAll("input");
+    const name = (nameI.value || "").trim();
+    let host = (hostI.value || "").trim();
+    const port = Number(portI.value || 5000);
+    if (!host) continue;
+    if (!/^https?:\/\//i.test(host)) host = "http://" + host;
+    arr.push({ name: name || (new URL(host)).hostname, host, port });
   }
-  async function actualizar() {
-    const tipo = document.getElementById("tipo").value.trim();
-    const nuevoPrecio = parseFloat(document.getElementById("precio").value);
-    if (!tipo || !Number.isFinite(nuevoPrecio)) return alert("Completa tipo y precio");
-    await fetch("/actualizar", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ tipo, nuevoPrecio }) });
-    cargarPrecios();
-    log(`✅ Precio actualizado: ${tipo} -> ${nuevoPrecio}`);
+  return arr;
+}
+async function guardarConfig() {
+  const distribuidoresRegistrados = recogerConfigInputs();
+  const r = await fetch("/config", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ distribuidoresRegistrados })
+  });
+  const j = await r.json();
+  if (j.ok) {
+    $("cfgMsg").textContent = "Configuración guardada";
+    setTimeout(()=> $("cfgMsg").textContent="", 1500);
+  } else {
+    $("cfgMsg").textContent = j.error || "Error guardando config";
   }
-  function log(msg) {
-    const div = document.getElementById("log");
-    const p = document.createElement("div");
-    p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-    div.appendChild(p);
-    div.scrollTop = div.scrollHeight;
-  }
-  async function cargarConfig() {
-    const res = await fetch("/config");
-    const cfg = await res.json();
-    const list = document.getElementById("configList");
-    list.innerHTML = "";
-    (cfg.distribuidoresRegistrados || []).forEach((d, idx) => {
-      const item = document.createElement("div");
-      item.innerHTML = `
-        <pre>${JSON.stringify(d, null, 2)}</pre>
-        <button onclick="removerDistribuidor(${idx})">Eliminar</button>
-      `;
-      list.appendChild(item);
-    });
-    window._cfg = cfg;
-  }
-  function agregarDistribuidor() {
-    const id = prompt("ID del distribuidor (ej. D1)");
-    const host = prompt("Host/IP del distribuidor (informativo)");
-    const puerto = prompt("Puerto (informativo)");
-    if (!window._cfg) window._cfg = { distribuidoresRegistrados: [] };
-    window._cfg.distribuidoresRegistrados.push({ id, host, puerto });
-    cargarConfig();
-  }
-  function removerDistribuidor(idx) {
-    if (!window._cfg) return;
-    window._cfg.distribuidoresRegistrados.splice(idx, 1);
-    cargarConfig();
-  }
-  async function guardarConfig() {
-    await fetch("/config", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(window._cfg || { distribuidoresRegistrados: [] }) });
-    log("💾 Configuración guardada");
+}
+$("btnAdd").onclick = () => {
+  $("distList").appendChild(makeRow("", "http://localhost", 5000));
+};
+$("btnSave").onclick = guardarConfig;
+
+// ---- reportes ----
+let refreshTimer = null;
+
+async function actualizarReportes() {
+  const outEl = $("reportesOut");
+  outEl.textContent = "Consultando...";
+
+  // 1) Traer lista config
+  const cfg = await fetch("/config").then(r => r.json());
+  const lista = Array.isArray(cfg.distribuidoresRegistrados) ? cfg.distribuidoresRegistrados : [];
+  if (lista.length === 0) {
+    outEl.textContent = "No hay distribuidores configurados.";
+    return;
   }
 
-  // WebSocket para eventos en vivo
-  try {
-    const socket = new WebSocket(`ws://${window.location.host}`);
-    socket.onmessage = (e) => log(e.data);
-  } catch (e) {
-    log("⚠️ No fue posible conectar WebSocket");
+  // 2) Construir URLs y consultar /aggregate
+  const resultados = [];
+  for (const item of lista) {
+    let entry = item;
+    if (typeof item === "string") {
+      // compat
+      try {
+        const u = new URL(item);
+        entry = { name: u.hostname, host: `${u.protocol}//${u.hostname}`, port: Number(u.port || 80) };
+      } catch { entry = { name: item, host: "http://" + item, port: 5000 }; }
+    }
+    const full = toURL(entry.host, entry.port);
+    try {
+      const j = await fetch(`${full}/aggregate`).then(r => r.json());
+      resultados.push({ entry, ok: j.ok, data: j.data || {} });
+    } catch (e) {
+      resultados.push({ entry, ok: false, data: {}, error: e.message });
+    }
   }
 
-  cargarPrecios();
-  cargarConfig();
-  </script>
+  // 3) Render tablas
+  let html = "";
+  for (const r of resultados) {
+    const full = toURL(r.entry.host, r.entry.port);
+    html += `<h4 style="margin:8px 0;">Distribuidor: ${r.entry.name} — <span class="muted">${full}</span> ${r.ok ? "" : "(ERROR)"}</h4>`;
+    if (!r.ok) {
+      html += `<pre style="background:#111;color:#eee;padding:8px;border-radius:8px;">${r.error || "Fallo al consultar /aggregate"}</pre>`;
+      continue;
+    }
+    html += `<table><thead><tr><th>Combustible</th><th>Ventas</th><th>Litros</th><th>Total $</th></tr></thead><tbody>`;
+    const tipos = Object.keys(r.data || {});
+    if (tipos.length === 0) {
+      html += `<tr><td colspan="4">Sin datos todavía</td></tr>`;
+    } else {
+      for (const t of tipos) {
+        const row = r.data[t];
+        html += `<tr>
+          <td>${t}</td>
+          <td>${row.ventas || 0}</td>
+          <td>${row.litros || 0}</td>
+          <td>${row.total || 0}</td>
+        </tr>`;
+      }
+    }
+    html += `</tbody></table>`;
+  }
+  outEl.innerHTML = html;
+
+  // 4) Marca de tiempo
+  const now = new Date();
+  $("repStatus").textContent = `Última actualización: ${now.toLocaleTimeString()}`;
+}
+
+function actualizarAutoToggle() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  if (!$("autoChk").checked) { $("repStatus").textContent = ""; return; }
+
+  let secs = parseInt($("secsInp").value, 10);
+  if (!Number.isFinite(secs) || secs < 2) secs = 5;
+  actualizarReportes();
+  refreshTimer = setInterval(actualizarReportes, secs * 1000);
+  $("repStatus").textContent = `Auto-actualizando cada ${secs}s…`;
+}
+
+// ---- UI wiring ----
+$("btnAct").onclick = actualizarPrecio;
+$("btnRep").onclick = actualizarReportes;
+$("autoChk").onchange = actualizarAutoToggle;
+$("secsInp").onchange = actualizarAutoToggle;
+
+// init
+cargarPrecios();
+cargarConfig();
+</script>
+
 </body>
 </html>
