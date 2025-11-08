@@ -1,4 +1,4 @@
-// distribuidor/distribuidor.js
+
 const net = require("net");
 const http = require("http");
 const express = require("express");
@@ -15,7 +15,7 @@ const EMPRESA_PORT = parseInt(process.env.EMPRESA_PORT || "6000", 10);
 // === STATE ===
 const app = express();
 app.use(express.json());
-app.use(cors()); // <- HABILITA CORS PARA QUE EL PANEL PUEDA LLAMAR /aggregate
+app.use(cors()); 
 
 let empresaSock = null;
 const surtidores = new Set();

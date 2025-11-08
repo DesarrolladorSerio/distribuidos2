@@ -1,4 +1,4 @@
-// empresa/empresa.js
+
 const net = require("net");
 const express = require("express");
 const http = require("http");
@@ -29,7 +29,7 @@ let preciosBase = { "93": 1000, "95": 1250, "97": 1300, "diesel": 1100, "kerosen
 
 // Conexiones TCP de distribuidores
 let distribuidores = new Set();
-const distributorMeta = new Map(); // socket -> { id, helloTs, addr }
+const distributorMeta = new Map();
 
 // Helpers NDJSON
 function sendJSON(sock, obj) { try { sock.write(JSON.stringify(obj) + "\n"); } catch {} }
@@ -47,7 +47,7 @@ function decodeByLine(socket, onMsg) {
   });
 }
 
-// ---- Servidor TCP (empresa <= distribuidores) ----
+// ---- Servidor TCP 
 const tcpServer = net.createServer((socket) => {
   const remoteId = `${socket.remoteAddress}:${socket.remotePort}`;
   distribuidores.add(socket);
@@ -143,7 +143,6 @@ app.post("/actualizar", (req, res) => {
   res.json({ ok: true });
 });
 
-// Config (persistente desde UI) — admite arrays de string o de objetos {name,host,port}
 app.get("/config", (_req, res) => res.json(config));
 
 app.post("/config", (req, res) => {
@@ -154,7 +153,7 @@ app.post("/config", (req, res) => {
     return res.status(400).json({ ok: false, error: "distribuidoresRegistrados debe ser un arreglo" });
   }
 
-  // Normalizar: aceptar ["http://host:5000", ...] o [{name,host,port}, ...]
+
   const normalized = [];
   for (const item of list) {
     if (typeof item === "string") {
@@ -163,7 +162,6 @@ app.post("/config", (req, res) => {
         const u = new URL(item);
         normalized.push({ name: u.hostname, host: `${u.protocol}//${u.hostname}`, port: Number(u.port || 80) });
       } catch {
-        // string simple (sin protocolo/puerto): asumir host, puerto 5000
         normalized.push({ name: item, host: `http://${item}`, port: 5000 });
       }
     } else if (item && typeof item === "object") {
